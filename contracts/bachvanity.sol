@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 contract Bachvanity {
 
     struct Orders {
+        address requestOwner;
         uint256 amount;
         bytes32 bytecodeHash;
         address deployer;
@@ -73,6 +74,7 @@ contract Bachvanity {
         }
         require(maxPoints > 0, "!maxPoints");
         orders.push(Orders({
+            requestOwner: msg.sender,
             amount: msg.value,
             bytecodeHash: bytecodeHash,
             deployer: deployer,
@@ -115,6 +117,18 @@ contract Bachvanity {
         Orders storage order = orders[orderId];
         require(block.timestamp > order.deadline, "!deadline");
         require(order.bestSubmitter == msg.sender, "!notBest");
+        uint256 amount = order.amount;
+        require(amount > 0, "!claimed");
+        order.amount = 0;
+        (bool success, ) = msg.sender.call{value: amount}("");
+        require(success, "!transfer");
+    }
+
+    function claimDeadOrder(uint256 orderId) public {
+        Orders storage order = orders[orderId];
+        require(block.timestamp > order.deadline, "!deadline");
+        require(order.bestSubmitter == address(0), "!hasBest");
+        require(order.requestOwner == msg.sender, "!notOwner");
         uint256 amount = order.amount;
         require(amount > 0, "!claimed");
         order.amount = 0;
