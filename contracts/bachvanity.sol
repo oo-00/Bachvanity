@@ -85,6 +85,7 @@ contract Bachvanity {
             bestSalt: bytes32(0),
             bestSubmitter: address(0)
         }));
+        userOrderIDs[msg.sender].push(orders.length - 1);
     }
 
     function submitSalt(uint256 orderId, bytes32 salt) public {
