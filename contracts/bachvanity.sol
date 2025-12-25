@@ -2,8 +2,17 @@
 pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract Bachvanity {
+contract Bachvanity is Ownable {
+
+    // Constants and state variables
+    uint256 public constant DENOM = 10000;
+    uint256 public constant maxLateClaimCallFee = 500; // max 5% fee
+    uint256 public lateClaimCallFee = 100; // 1% fee for late claim calls
+    uint256 public maxDeadline = 180 days;
+    uint256 public minDeadline = 24 hours;
+    uint256 public lateClaimDelay = 7 days;
 
     struct Orders {
         address requestOwner;
@@ -17,17 +26,19 @@ contract Bachvanity {
         bytes32 bestSalt;
         address bestSubmitter;
     }
-
     Orders[] public orders;
     mapping(address => uint256[]) public userOrderIDs;
 
+    // Events
     event Deployed(address addr, bytes32 salt);
     event OrderCreated(uint256 orderId, address requestOwner, uint256 amount, bytes32 bytecodeHash, address deployer, string addressPattern, uint160 deadline);
     event SaltSubmitted(uint256 orderId, address submitter, bytes32 salt, uint8 points);
     event OrderClosed(uint256 orderId, address winner, uint256 amount);
 
-    // View functions
+    // Constructor
+    constructor(address _owner) Ownable(_owner) {}
 
+    // View functions
     /*
     * @return total number of orders
     */
@@ -83,7 +94,6 @@ contract Bachvanity {
     }
 
     // Write functions
-
     /*
     * @dev create a vanity address request
     * @param deployer address that will deploy the contract, if address(0) then this contract will deploy
@@ -92,9 +102,9 @@ contract Bachvanity {
     * @param deadline timestamp until which the request is valid
     */
     function createRequest(address deployer, bytes32 bytecodeHash, string memory addressPattern, uint160 deadline) public payable {
-        require(msg.value > 0, "!value");
-        require(deadline > block.timestamp, "!deadline");
-        require(deadline - block.timestamp <= 60 days, "!maxDeadline");
+        require(msg.value > DENOM, "!minValue");
+        require(deadline > block.timestamp + minDeadline, "!deadline");
+        require(deadline - block.timestamp <= maxDeadline, "!maxDeadline");
         if(deployer == address(0)) {
             deployer = address(this);
         }
@@ -167,13 +177,19 @@ contract Bachvanity {
     function claimReward(uint256 orderId) public {
         Orders storage order = orders[orderId];
         require(block.timestamp > order.deadline, "!deadline");
-        require(order.bestSubmitter == msg.sender, "!notBest");
+        address winner = order.bestSubmitter;
         uint256 amount = order.amount;
         require(amount > 0, "!claimed");
-        order.amount = 0;
-        (bool success, ) = msg.sender.call{value: amount}("");
+        order.amount = 0; // prevent re-entrancy by setting amount to 0 before any transfers
+        if(msg.sender != winner && block.timestamp > order.deadline + lateClaimDelay) {
+            uint256 fee = (amount * lateClaimCallFee) / DENOM;
+            amount -= fee;
+            (bool feeSuccess, ) = msg.sender.call{value: fee}("");
+            require(feeSuccess, "!feeTransfer");
+        }
+        (bool success, ) = winner.call{value: amount}("");
         require(success, "!transfer");
-        emit OrderClosed(orderId, msg.sender, amount);
+        emit OrderClosed(orderId, winner, amount);
     }
 
     /*
@@ -208,4 +224,42 @@ contract Bachvanity {
         }
         emit Deployed(addr, salt);
     }
+
+    // Owner functions to update parameters
+
+    /*
+    * @dev update late claim call fee
+    * @param _lateClaimCallFee new late claim call fee
+    */
+    function updateLateClaimCallFee(uint256 _lateClaimCallFee) public onlyOwner {
+        require(_lateClaimCallFee <= DENOM, "!invalidFee");
+        lateClaimCallFee = _lateClaimCallFee;
+    }
+
+    /*
+    * @dev update minimum deadline
+    * @param _minDeadline new minimum deadline
+    */
+    function updateMinDeadline(uint256 _minDeadline) public onlyOwner {
+        minDeadline = _minDeadline;
+    }
+
+    /*
+    * @dev update maximum deadline
+    * @param _maxDeadline new maximum deadline
+    */
+    function updateMaxDeadline(uint256 _maxDeadline) public onlyOwner {
+        require(_maxDeadline >= 7 days, "!invalidMaxDeadline");
+        maxDeadline = _maxDeadline;
+    }
+
+    /*
+    * @dev update late claim delay
+    * @param _lateClaimDelay new late claim delay
+    */
+    function updateLateClaimDelay(uint256 _lateClaimDelay) public onlyOwner {
+        require(_lateClaimDelay >= 24 hours, "!invalidLateClaimDelay");
+        lateClaimDelay = _lateClaimDelay;
+    }
+
 }
